@@ -1,6 +1,8 @@
 package io.github.jhipster.sample.web.rest;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doNothing;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
@@ -11,6 +13,7 @@ import io.github.jhipster.sample.domain.User;
 import io.github.jhipster.sample.repository.AuthorityRepository;
 import io.github.jhipster.sample.repository.UserRepository;
 import io.github.jhipster.sample.security.AuthoritiesConstants;
+import io.github.jhipster.sample.service.MailService;
 import io.github.jhipster.sample.service.UserService;
 import io.github.jhipster.sample.service.dto.AdminUserDTO;
 import io.github.jhipster.sample.service.dto.PasswordChangeDTO;
@@ -30,6 +33,7 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.http.MediaType;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.test.context.support.WithMockUser;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -59,6 +63,9 @@ class AccountResourceIT {
 
     @Autowired
     private MockMvc restAccountMockMvc;
+
+    @MockitoBean
+    private MailService mailService;
 
     private Long numberOfUsers;
 
@@ -126,7 +133,7 @@ class AccountResourceIT {
     void testRegisterValid() throws Exception {
         ManagedUserVM validUser = new ManagedUserVM();
         validUser.setLogin("test-register-valid");
-        validUser.setPassword("password");
+        validUser.setPassword("Pass123!"); // Valid password with letters, digits, and special characters
         validUser.setFirstName("Alice");
         validUser.setLastName("Test");
         validUser.setEmail("test-register-valid@example.com");
@@ -170,7 +177,16 @@ class AccountResourceIT {
         return Stream.of(
             createInvalidUser("bob", "password", "Bob", "Green", "invalid", true), // <-- invalid
             createInvalidUser("bob", "123", "Bob", "Green", "bob@example.com", true), // password with only 3 digits
-            createInvalidUser("bob", null, "Bob", "Green", "bob@example.com", true) // invalid null password
+            createInvalidUser("bob", null, "Bob", "Green", "bob@example.com", true), // invalid null password
+            createInvalidUser("bob", "password", "Bob", "Green", "invalid", true), // <-- invalid email
+            createInvalidUser("bob", "123", "Bob", "Green", "bob@example.com", true), // password with only 3 digits
+            createInvalidUser("bob", null, "Bob", "Green", "bob@example.com", true), // invalid null password
+            createInvalidUser("bob", "abcde", "Bob", "Green", "bob@example.com", true), // password too short (5 chars, needs > 5)
+            createInvalidUser("bob", "abcdef", "Bob", "Green", "bob@example.com", true), // password with only letters, no digits or symbols
+            createInvalidUser("bob", "123456", "Bob", "Green", "bob@example.com", true), // password with only digits, no letters or symbols
+            createInvalidUser("bob", "!@#$%^", "Bob", "Green", "bob@example.com", true), // password with only symbols, no letters or digits
+            createInvalidUser("bob", "abc123", "Bob", "Green", "bob@example.com", true), // password with letters and digits, no symbols
+            createInvalidUser("bob", "abc!@#", "Bob", "Green", "bob@example.com", true) // password with letters and symbols, no digits
         );
     }
 
@@ -213,7 +229,7 @@ class AccountResourceIT {
         // First registration
         ManagedUserVM firstUser = new ManagedUserVM();
         firstUser.setLogin("alice");
-        firstUser.setPassword("password");
+        firstUser.setPassword("Alice123!");
         firstUser.setFirstName("Alice");
         firstUser.setLastName("Something");
         firstUser.setEmail("alice@example.com");
@@ -265,7 +281,7 @@ class AccountResourceIT {
         // First user
         ManagedUserVM firstUser = new ManagedUserVM();
         firstUser.setLogin("test-register-duplicate-email");
-        firstUser.setPassword("password");
+        firstUser.setPassword("Email123!");
         firstUser.setFirstName("Alice");
         firstUser.setLastName("Test");
         firstUser.setEmail("test-register-duplicate-email@example.com");
@@ -338,9 +354,11 @@ class AccountResourceIT {
     @Test
     @Transactional
     void testRegisterAdminIsIgnored() throws Exception {
+        doNothing().when(mailService).sendActivationEmail(any(User.class));
+
         ManagedUserVM validUser = new ManagedUserVM();
         validUser.setLogin("badguy");
-        validUser.setPassword("password");
+        validUser.setPassword("BadGuy123!");
         validUser.setFirstName("Bad");
         validUser.setLastName("Guy");
         validUser.setEmail("badguy@example.com");
@@ -570,12 +588,12 @@ class AccountResourceIT {
             .perform(
                 post("/api/account/change-password")
                     .contentType(MediaType.APPLICATION_JSON)
-                    .content(om.writeValueAsBytes(new PasswordChangeDTO(currentPassword, "new password")))
+                    .content(om.writeValueAsBytes(new PasswordChangeDTO(currentPassword, "NewPassword1!")))
             )
             .andExpect(status().isOk());
 
         User updatedUser = userRepository.findOneByLogin("change-password").orElse(null);
-        assertThat(passwordEncoder.matches("new password", updatedUser.getPassword())).isTrue();
+        assertThat(passwordEncoder.matches("NewPassword1!", updatedUser.getPassword())).isTrue();
 
         userService.deleteUser("change-password");
     }
@@ -715,7 +733,7 @@ class AccountResourceIT {
 
         KeyAndPasswordVM keyAndPassword = new KeyAndPasswordVM();
         keyAndPassword.setKey(user.getResetKey());
-        keyAndPassword.setNewPassword("new password");
+        keyAndPassword.setNewPassword("ResetPassword1!");
 
         restAccountMockMvc
             .perform(
@@ -726,7 +744,7 @@ class AccountResourceIT {
             .andExpect(status().isOk());
 
         User updatedUser = userRepository.findOneByLogin(user.getLogin()).orElse(null);
-        assertThat(passwordEncoder.matches(keyAndPassword.getNewPassword(), updatedUser.getPassword())).isTrue();
+        assertThat(passwordEncoder.matches("ResetPassword1!", updatedUser.getPassword())).isTrue();
 
         userService.deleteUser("finish-password-reset");
     }
@@ -765,7 +783,7 @@ class AccountResourceIT {
     void testFinishPasswordResetWrongKey() throws Exception {
         KeyAndPasswordVM keyAndPassword = new KeyAndPasswordVM();
         keyAndPassword.setKey("wrong reset key");
-        keyAndPassword.setNewPassword("new password");
+        keyAndPassword.setNewPassword("WrongKeyPassword1!");
 
         restAccountMockMvc
             .perform(
@@ -774,5 +792,57 @@ class AccountResourceIT {
                     .content(om.writeValueAsBytes(keyAndPassword))
             )
             .andExpect(status().isInternalServerError());
+    }
+
+    @Test
+    @Transactional
+    @WithMockUser("password-history-test")
+    void testPasswordHistoryValidation() throws Exception {
+        // Create a user
+        User user = new User();
+        user.setLogin("password-history-test");
+        user.setEmail("password-history@example.com");
+        user.setActivated(true);
+        user.setPassword(passwordEncoder.encode("OldPass1!"));
+        userRepository.saveAndFlush(user);
+
+        // Change password first time - should succeed
+        PasswordChangeDTO passwordChangeDTO = new PasswordChangeDTO();
+        passwordChangeDTO.setCurrentPassword("OldPass1!");
+        passwordChangeDTO.setNewPassword("NewPass1!");
+
+        restAccountMockMvc
+            .perform(
+                post("/api/account/change-password")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(om.writeValueAsBytes(passwordChangeDTO))
+            )
+            .andExpect(status().isOk());
+
+        // Try to change to the same password - should fail
+        passwordChangeDTO.setCurrentPassword("NewPass1!");
+        passwordChangeDTO.setNewPassword("NewPass1!");
+
+        restAccountMockMvc
+            .perform(
+                post("/api/account/change-password")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(om.writeValueAsBytes(passwordChangeDTO))
+            )
+            .andExpect(status().isBadRequest());
+
+        // Change to a completely new password - should succeed
+        passwordChangeDTO.setNewPassword("VeryNewPass2@");
+
+        restAccountMockMvc
+            .perform(
+                post("/api/account/change-password")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(om.writeValueAsBytes(passwordChangeDTO))
+            )
+            .andExpect(status().isOk());
+
+        // Clean up
+        userService.deleteUser("password-history-test");
     }
 }
