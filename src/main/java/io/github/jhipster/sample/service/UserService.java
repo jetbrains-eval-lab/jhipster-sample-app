@@ -9,6 +9,7 @@ import io.github.jhipster.sample.security.AuthoritiesConstants;
 import io.github.jhipster.sample.security.SecurityUtils;
 import io.github.jhipster.sample.service.dto.AdminUserDTO;
 import io.github.jhipster.sample.service.dto.UserDTO;
+import io.github.jhipster.sample.web.rest.errors.InvalidPasswordException;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
@@ -41,16 +42,20 @@ public class UserService {
 
     private final CacheManager cacheManager;
 
+    private final PasswordPolicyService passwordPolicyService;
+
     public UserService(
         UserRepository userRepository,
         PasswordEncoder passwordEncoder,
         AuthorityRepository authorityRepository,
-        CacheManager cacheManager
+        CacheManager cacheManager,
+        PasswordPolicyService passwordPolicyService
     ) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.authorityRepository = authorityRepository;
         this.cacheManager = cacheManager;
+        this.passwordPolicyService = passwordPolicyService;
     }
 
     public Optional<User> activateRegistration(String key) {
@@ -69,13 +74,34 @@ public class UserService {
 
     public Optional<User> completePasswordReset(String newPassword, String key) {
         LOG.debug("Reset user password for reset key {}", key);
+
+        // Validate password against policy
+        passwordPolicyService.validatePassword(newPassword);
+
         return userRepository
             .findOneByResetKey(key)
             .filter(user -> user.getResetDate().isAfter(Instant.now().minus(1, ChronoUnit.DAYS)))
             .map(user -> {
-                user.setPassword(passwordEncoder.encode(newPassword));
+                // Check if password has been used recently
+                if (passwordPolicyService.isPasswordUsedRecently(user, newPassword)) {
+                    throw new InvalidPasswordException();
+                }
+
+                // Encode and set new password
+                String encryptedPassword = passwordEncoder.encode(newPassword);
+                user.setPassword(encryptedPassword);
                 user.setResetKey(null);
                 user.setResetDate(null);
+
+                // Update password dates
+                passwordPolicyService.updatePasswordDates(user);
+
+                // Save user first
+                user = userRepository.save(user);
+
+                // Save password to history
+                passwordPolicyService.savePasswordToHistory(user, encryptedPassword);
+
                 this.clearUserCaches(user);
                 return user;
             });
@@ -110,6 +136,10 @@ public class UserService {
                     throw new EmailAlreadyUsedException();
                 }
             });
+
+        // Validate password against policy
+        passwordPolicyService.validatePassword(password);
+
         User newUser = new User();
         String encryptedPassword = passwordEncoder.encode(password);
         newUser.setLogin(userDTO.getLogin().toLowerCase());
@@ -126,10 +156,19 @@ public class UserService {
         newUser.setActivated(false);
         // new user gets registration key
         newUser.setActivationKey(RandomUtil.generateActivationKey());
+        // Set password dates
+        passwordPolicyService.updatePasswordDates(newUser);
+
         Set<Authority> authorities = new HashSet<>();
         authorityRepository.findById(AuthoritiesConstants.USER).ifPresent(authorities::add);
         newUser.setAuthorities(authorities);
-        userRepository.save(newUser);
+
+        // Save user first
+        newUser = userRepository.save(newUser);
+
+        // Save password to history
+        passwordPolicyService.savePasswordToHistory(newUser, encryptedPassword);
+
         this.clearUserCaches(newUser);
         LOG.debug("Created Information for User: {}", newUser);
         return newUser;
@@ -139,6 +178,7 @@ public class UserService {
         if (existingUser.isActivated()) {
             return false;
         }
+        passwordPolicyService.cleanupPasswordHistory(existingUser);
         userRepository.delete(existingUser);
         userRepository.flush();
         this.clearUserCaches(existingUser);
@@ -159,11 +199,22 @@ public class UserService {
         } else {
             user.setLangKey(userDTO.getLangKey());
         }
-        String encryptedPassword = passwordEncoder.encode(RandomUtil.generatePassword());
+
+        // Generate a random password that meets the policy requirements
+        String password;
+        do {
+            password = RandomUtil.generatePassword() + "A1!"; // Ensure it has a letter, digit, and symbol
+        } while (passwordPolicyService.isPasswordValid(password));
+
+        String encryptedPassword = passwordEncoder.encode(password);
         user.setPassword(encryptedPassword);
         user.setResetKey(RandomUtil.generateResetKey());
         user.setResetDate(Instant.now());
         user.setActivated(true);
+
+        // Set password dates
+        passwordPolicyService.updatePasswordDates(user);
+
         if (userDTO.getAuthorities() != null) {
             Set<Authority> authorities = userDTO
                 .getAuthorities()
@@ -174,7 +225,13 @@ public class UserService {
                 .collect(Collectors.toSet());
             user.setAuthorities(authorities);
         }
-        userRepository.save(user);
+
+        // Save user first
+        user = userRepository.save(user);
+
+        // Save password to history
+        passwordPolicyService.savePasswordToHistory(user, encryptedPassword);
+
         this.clearUserCaches(user);
         LOG.debug("Created Information for User: {}", user);
         return user;
@@ -222,6 +279,7 @@ public class UserService {
         userRepository
             .findOneByLogin(login)
             .ifPresent(user -> {
+                passwordPolicyService.cleanupPasswordHistory(user);
                 userRepository.delete(user);
                 this.clearUserCaches(user);
                 LOG.debug("Deleted User: {}", user);
@@ -259,12 +317,28 @@ public class UserService {
         SecurityUtils.getCurrentUserLogin()
             .flatMap(userRepository::findOneByLogin)
             .ifPresent(user -> {
+                // Validate current password
                 String currentEncryptedPassword = user.getPassword();
                 if (!passwordEncoder.matches(currentClearTextPassword, currentEncryptedPassword)) {
                     throw new InvalidPasswordException();
                 }
+
+                // Validate password policy
+                passwordPolicyService.validatePasswordPolicy(user, currentClearTextPassword, newPassword);
+
+                // Encode and set new password
                 String encryptedPassword = passwordEncoder.encode(newPassword);
                 user.setPassword(encryptedPassword);
+
+                // Update password dates
+                passwordPolicyService.updatePasswordDates(user);
+
+                // Save user first
+                user = userRepository.save(user);
+
+                // Save password to history
+                passwordPolicyService.savePasswordToHistory(user, encryptedPassword);
+
                 this.clearUserCaches(user);
                 LOG.debug("Changed password for User: {}", user);
             });
