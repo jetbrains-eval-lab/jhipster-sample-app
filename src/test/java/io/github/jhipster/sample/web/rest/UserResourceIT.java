@@ -33,7 +33,7 @@ import org.springframework.transaction.annotation.Transactional;
  * Integration tests for the {@link UserResource} REST controller.
  */
 @AutoConfigureMockMvc
-@WithMockUser(authorities = AuthoritiesConstants.ADMIN)
+@WithMockUser(authorities = { "ROLE_ADMINISTRATOR" })
 @IntegrationTest
 class UserResourceIT {
 

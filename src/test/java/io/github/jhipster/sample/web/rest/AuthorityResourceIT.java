@@ -27,7 +27,7 @@ import org.springframework.transaction.annotation.Transactional;
  */
 @IntegrationTest
 @AutoConfigureMockMvc
-@WithMockUser(authorities = { "ROLE_ADMIN" })
+@WithMockUser(authorities = { "ROLE_ADMINISTRATOR" })
 class AuthorityResourceIT {
 
     private static final String ENTITY_API_URL = "/api/authorities";

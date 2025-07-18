@@ -12,7 +12,7 @@ import HasAnyAuthorityDirective from './has-any-authority.directive';
 
 @Component({
   imports: [HasAnyAuthorityDirective],
-  template: ` <div *jhiHasAnyAuthority="'ROLE_ADMIN'" #content></div> `,
+  template: ` <div *jhiHasAnyAuthority="'ROLE_ADMINISTRATOR'" #content></div> `,
 })
 class TestHasAnyAuthorityDirectiveComponent {
   content = viewChild<ElementRef>('content');
