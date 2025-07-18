@@ -20,6 +20,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.web.authentication.rememberme.PersistentTokenRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import tech.jhipster.security.RandomUtil;
@@ -41,16 +42,20 @@ public class UserService {
 
     private final CacheManager cacheManager;
 
+    private final org.springframework.security.web.authentication.rememberme.PersistentTokenRepository persistentTokenRepository;
+
     public UserService(
         UserRepository userRepository,
         PasswordEncoder passwordEncoder,
         AuthorityRepository authorityRepository,
-        CacheManager cacheManager
+        CacheManager cacheManager,
+        PersistentTokenRepository persistentTokenRepository
     ) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.authorityRepository = authorityRepository;
         this.cacheManager = cacheManager;
+        this.persistentTokenRepository = persistentTokenRepository;
     }
 
     public Optional<User> activateRegistration(String key) {
@@ -222,6 +227,8 @@ public class UserService {
         userRepository
             .findOneByLogin(login)
             .ifPresent(user -> {
+                // Delete persistent tokens for the user
+                persistentTokenRepository.removeUserTokens(user.getLogin());
                 userRepository.delete(user);
                 this.clearUserCaches(user);
                 LOG.debug("Deleted User: {}", user);
@@ -301,6 +308,8 @@ public class UserService {
             .findAllByActivatedIsFalseAndActivationKeyIsNotNullAndCreatedDateBefore(Instant.now().minus(3, ChronoUnit.DAYS))
             .forEach(user -> {
                 LOG.debug("Deleting not activated user {}", user.getLogin());
+                // Delete persistent tokens for the user
+                persistentTokenRepository.removeUserTokens(user.getLogin());
                 userRepository.delete(user);
                 this.clearUserCaches(user);
             });
