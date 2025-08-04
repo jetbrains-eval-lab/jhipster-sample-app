@@ -1,12 +1,13 @@
 package io.github.jhipster.sample.web.rest;
 
-import static io.github.jhipster.sample.security.SecurityUtils.AUTHORITIES_CLAIM;
-import static io.github.jhipster.sample.security.SecurityUtils.JWT_ALGORITHM;
-import static io.github.jhipster.sample.security.SecurityUtils.USER_ID_CLAIM;
+import static io.github.jhipster.sample.security.SecurityUtils.*;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
+import io.github.jhipster.sample.repository.UserRepository;
 import io.github.jhipster.sample.security.DomainUserDetailsService.UserWithId;
 import io.github.jhipster.sample.web.rest.vm.LoginVM;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import java.security.Principal;
 import java.time.Instant;
@@ -27,6 +28,9 @@ import org.springframework.security.oauth2.jwt.JwsHeader;
 import org.springframework.security.oauth2.jwt.JwtClaimsSet;
 import org.springframework.security.oauth2.jwt.JwtEncoder;
 import org.springframework.security.oauth2.jwt.JwtEncoderParameters;
+import org.springframework.security.web.authentication.rememberme.AbstractRememberMeServices;
+import org.springframework.security.web.authentication.rememberme.TokenBasedRememberMeServices;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
 /**
@@ -39,6 +43,7 @@ public class AuthenticateController {
     private static final Logger LOG = LoggerFactory.getLogger(AuthenticateController.class);
 
     private final JwtEncoder jwtEncoder;
+    private final AbstractRememberMeServices rememberMeServices;
 
     @Value("${jhipster.security.authentication.jwt.token-validity-in-seconds:0}")
     private long tokenValidityInSeconds;
@@ -48,13 +53,23 @@ public class AuthenticateController {
 
     private final AuthenticationManagerBuilder authenticationManagerBuilder;
 
-    public AuthenticateController(JwtEncoder jwtEncoder, AuthenticationManagerBuilder authenticationManagerBuilder) {
+    public AuthenticateController(
+        JwtEncoder jwtEncoder,
+        AuthenticationManagerBuilder authenticationManagerBuilder,
+        AbstractRememberMeServices rememberMeServices
+    ) {
         this.jwtEncoder = jwtEncoder;
         this.authenticationManagerBuilder = authenticationManagerBuilder;
+        this.rememberMeServices = rememberMeServices;
     }
 
     @PostMapping("/authenticate")
-    public ResponseEntity<JWTToken> authorize(@Valid @RequestBody LoginVM loginVM) {
+    @Transactional
+    public ResponseEntity<JWTToken> authorize(
+        @Valid @RequestBody LoginVM loginVM,
+        HttpServletRequest request,
+        HttpServletResponse response
+    ) {
         UsernamePasswordAuthenticationToken authenticationToken = new UsernamePasswordAuthenticationToken(
             loginVM.getUsername(),
             loginVM.getPassword()
@@ -65,6 +80,14 @@ public class AuthenticateController {
         String jwt = this.createToken(authentication, loginVM.isRememberMe());
         HttpHeaders httpHeaders = new HttpHeaders();
         httpHeaders.setBearerAuth(jwt);
+
+        // If remember me is selected, create a persistent token
+        if (loginVM.isRememberMe()) {
+            String login = authentication.getName();
+            rememberMeServices.loginSuccess(request, response, authentication);
+            LOG.debug("Created persistent token for user {}", login);
+        }
+
         return new ResponseEntity<>(new JWTToken(jwt), httpHeaders, HttpStatus.OK);
     }
 
